@@ -26,7 +26,7 @@ type Config struct {
 // Player struct handles the player
 type Player struct {
 	User           *discordgo.User
-	DM             *discordgo.Channel
+	DM             string
 	Name           string
 	Health         int
 	Hunger         int
@@ -41,12 +41,12 @@ func (p *Player) String() string {
 
 // Dm handles dmming to a person
 func (p *Player) Dm(s *discordgo.Session, send string) (*discordgo.Message, error) {
-	return s.ChannelMessageSend(p.DM.ID, send)
+	return s.ChannelMessageSend(p.DM, send)
 }
 
 // DmEmbed handles dmming embeds to a person
 func (p *Player) DmEmbed(s *discordgo.Session, send *discordgo.MessageEmbed) (*discordgo.Message, error) {
-	return s.ChannelMessageSendEmbed(p.DM.ID, send)
+	return s.ChannelMessageSendEmbed(p.DM, send)
 }
 
 // AddHealth handles the adding of health, returns true if dead
@@ -109,7 +109,7 @@ func (g *Game) AddItem(item string, amount int) int {
 }
 
 // NewPlayer handles the creation of players
-func NewPlayer(user *discordgo.User, dm *discordgo.Channel) *Player {
+func NewPlayer(user *discordgo.User, dm string) *Player {
 	return &Player{user, dm, user.Username, 100, 0, false, 0, false}
 }
 
@@ -141,7 +141,7 @@ func (g *Game) GetOptions(player *Player) (<-chan string, chan<- string) {
 		}
 
 		msgchan := addMessageQueue(g.Sess, func(m *discordgo.MessageCreate) bool {
-			if m.ChannelID == player.DM.ID && m.Author.ID == player.User.ID {
+			if m.ChannelID == player.DM && m.Author.ID == player.User.ID {
 				switch strings.ToLower(m.Content) {
 				case "food":
 					return true
@@ -202,7 +202,7 @@ func (g *Game) GetOptions(player *Player) (<-chan string, chan<- string) {
 				}
 			case extra := <-rest:
 				em.Description += "```md\n" + extra + "```"
-				g.Sess.ChannelMessageEditEmbed(player.DM.ID, msg.ID, em)
+				g.Sess.ChannelMessageEditEmbed(player.DM, msg.ID, em)
 			case <-timeout:
 				close(rest)
 				delete(g.Rests, player.User.ID)
@@ -579,7 +579,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 			}
 		}
 		dm, _ := s.UserChannelCreate(m.Author.ID)
-		np := NewPlayer(m.Author, dm)
+		np := NewPlayer(m.Author, dm.ID)
 		ingame = append(ingame, m.Author.ID)
 		nextplayers = append(nextplayers, np)
 		for _, p := range nextplayers {
