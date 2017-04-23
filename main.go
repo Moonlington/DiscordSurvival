@@ -15,6 +15,13 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+const maxplayers = 1
+const maxdays = 50
+
+var ingame []string
+var nextplayers []*Player
+var loadinggame *Game
+
 var conf *Config
 
 // Config struct handles the Token and Prefix of DiscordSurvival
@@ -132,22 +139,26 @@ func (g *Game) GetOptions(player *Player) (<-chan string, chan<- string) {
 	done := make(chan string)
 	rest := make(chan string)
 	go func() {
-		em := g.MakeEmbedMessage(fmt.Sprintf("Discord Survival | Day %d | Radio: %d%%", g.Day, g.RadioRepair), "```md\nfood | Gather for food <+ food>\nrepair | Try to repair the radio\nrest | Rest <+ health>\nsuicide | Commit suicide, pls dont tho. <+ instant death>```")
+		em := g.MakeEmbedMessage(fmt.Sprintf("Discord Survival | Day %d | Radio: %d%%", g.Day, g.RadioRepair), "```md\nfood | Gather for food <+ food>\nrepair | Try to repair the radio\nrest | Rest <+ health>\nchat <message> | Says something to the others.\nsuicide | Commit suicide, pls dont tho. <+ instant death>```")
 
 		msg, err := player.DmEmbed(g.Sess, em)
 		if err != nil {
-			fmt.Println("fuck")
+			fmt.Println("fuck", err.Error())
 			return
 		}
 
-		msgchan := addMessageQueue(g.Sess, func(m *discordgo.MessageCreate) bool {
+		var msgchan <-chan *discordgo.MessageCreate
+
+		msgchan = addMessageQueue(g.Sess, func(m *discordgo.MessageCreate) bool {
 			if m.ChannelID == player.DM && m.Author.ID == player.User.ID {
-				switch strings.ToLower(m.Content) {
+				switch strings.Fields(m.ContentWithMentionsReplaced())[0] {
 				case "food":
 					return true
 				case "repair":
 					return true
 				case "rest":
+					return true
+				case "chat":
 					return true
 				case "suicide":
 					return true
@@ -159,20 +170,20 @@ func (g *Game) GetOptions(player *Player) (<-chan string, chan<- string) {
 		})
 
 		d := true
-		timeout := time.After(time.Second * 30)
+		timeout := time.After(time.Second * 120)
 
 		for d {
 			select {
 			case returned := <-msgchan:
 				if returned != nil {
-					switch strings.ToLower(returned.Content) {
+					switch strings.Fields(returned.ContentWithMentionsReplaced())[0] {
 					case "food":
 						close(rest)
 						delete(g.Rests, player.User.ID)
 						d = false
 						player.Dm(g.Sess, "You decided to gather food.")
 						player.NextAction = 1
-						done <- player.Name + " is going to gather food. <+ food>"
+						done <- "[" + player.Name + "](is going to gather food.) <+ food>"
 						close(done)
 					case "repair":
 						close(rest)
@@ -180,7 +191,7 @@ func (g *Game) GetOptions(player *Player) (<-chan string, chan<- string) {
 						d = false
 						player.Dm(g.Sess, "You decided to repair the radio")
 						player.NextAction = 2
-						done <- player.Name + " is going to repair the radio. <+ repair>"
+						done <- "[" + player.Name + "](is going to repair the radio.) <+ repair>"
 						close(done)
 					case "rest":
 						close(rest)
@@ -188,15 +199,37 @@ func (g *Game) GetOptions(player *Player) (<-chan string, chan<- string) {
 						d = false
 						player.Dm(g.Sess, "You decided to rest")
 						player.NextAction = 3
-						done <- player.Name + " is going to rest. <+ health>"
+						done <- "[" + player.Name + "](is going to rest.) <+ health>"
 						close(done)
+					case "chat":
+						argstr := returned.ContentWithMentionsReplaced()[5:]
+						done <- "CHAT: [" + player.Name + `]("` + argstr + `")`
+						msgchan = addMessageQueue(g.Sess, func(m *discordgo.MessageCreate) bool {
+							if m.ChannelID == player.DM && m.Author.ID == player.User.ID {
+								switch strings.Fields(m.ContentWithMentionsReplaced())[0] {
+								case "food":
+									return true
+								case "repair":
+									return true
+								case "rest":
+									return true
+								case "chat":
+									return true
+								case "suicide":
+									return true
+								default:
+									return false
+								}
+							}
+							return false
+						})
 					case "suicide":
 						close(rest)
 						delete(g.Rests, player.User.ID)
 						d = false
 						player.Dm(g.Sess, "You decided to kill yourself.")
 						player.NextAction = -1
-						done <- player.Name + " is going to kill themselves. <- " + player.Name + ">"
+						done <- "[" + player.Name + "](is going to kill themselves.) <- " + player.Name + ">"
 						close(done)
 					}
 				}
@@ -271,7 +304,9 @@ func (g *Game) GameLoop() {
 		for d {
 			select {
 			case returned := <-m:
-				AmountDone++
+				if !strings.HasPrefix(returned, "CHAT: ") {
+					AmountDone++
+				}
 				for _, r := range g.Rests {
 					r <- returned
 				}
@@ -292,7 +327,7 @@ func (g *Game) GameLoop() {
 func (g *Game) PassDay() {
 	var logs []string
 	chance := rand.Intn(100)
-	if chance <= 5 {
+	if chance <= 10 {
 		c := rand.Intn(1)
 		switch c {
 		case 0:
@@ -398,13 +433,13 @@ func (g *Game) PassDay() {
 		switch c {
 		case 0:
 			g.Weather = "Rain"
-			g.WeatherCountdown = rand.Intn(2) + 1
+			g.WeatherCountdown = rand.Intn(1) + 1
 		case 1:
 			g.Weather = "Snow"
-			g.WeatherCountdown = rand.Intn(2) + 1
+			g.WeatherCountdown = rand.Intn(1) + 1
 		case 2:
 			g.Weather = "Blizzard"
-			g.WeatherCountdown = rand.Intn(2) + 1
+			g.WeatherCountdown = rand.Intn(1) + 1
 		}
 	} else {
 		g.WeatherCountdown--
@@ -541,12 +576,6 @@ func main() {
 	// Cleanly close down the Discord session.
 	dg.Close()
 }
-
-const maxplayers = 4
-
-var ingame []string
-var nextplayers []*Player
-var loadinggame *Game
 
 func addMessageQueue(s *discordgo.Session, f func(m *discordgo.MessageCreate) bool) <-chan *discordgo.MessageCreate {
 	c := make(chan *discordgo.MessageCreate)
