@@ -36,7 +36,7 @@ type Player struct {
 }
 
 func (p *Player) String() string {
-	return fmt.Sprintf("[%-10s](HP: %3d)<Hunger: %3d>", p.Name, p.Health, p.Hunger)
+	return fmt.Sprintf("[%-12s](HP: %3d)<Hunger: %3d>", p.Name, p.Health, p.Hunger)
 }
 
 // Dm handles dmming to a person
@@ -256,7 +256,7 @@ func (g *Game) StartGame() {
 // GameLoop handles the game itself
 func (g *Game) GameLoop() {
 	for g.IsPlaying {
-		var logs []string
+		var AmountDone int
 		for _, p := range g.Players {
 			log, rest := g.GetOptions(p)
 			g.Chans[p.User.ID] = log
@@ -271,11 +271,11 @@ func (g *Game) GameLoop() {
 		for d {
 			select {
 			case returned := <-m:
-				logs = append(logs, returned)
+				AmountDone++
 				for _, r := range g.Rests {
 					r <- returned
 				}
-				if len(logs) == g.MaxPlayers {
+				if AmountDone == g.MaxPlayers {
 					d = false
 				}
 			default:
@@ -291,7 +291,6 @@ func (g *Game) GameLoop() {
 // PassDay handles the next day
 func (g *Game) PassDay() {
 	var logs []string
-
 	chance := rand.Intn(100)
 	if chance <= 5 {
 		c := rand.Intn(1)
@@ -567,31 +566,84 @@ func addMessageQueue(s *discordgo.Session, f func(m *discordgo.MessageCreate) bo
 	return c
 }
 
+// AddNewPlayer handles the adding of a new player to a game
+func AddNewPlayer(s *discordgo.Session, u *discordgo.User) {
+	for _, i := range ingame {
+		if i == u.ID {
+			return
+		}
+	}
+	dm, _ := s.UserChannelCreate(u.ID)
+	np := NewPlayer(u, dm.ID)
+	ingame = append(ingame, u.ID)
+	nextplayers = append(nextplayers, np)
+	for _, p := range nextplayers {
+		p.Dm(s, fmt.Sprintf("New player: %s [%d/%d]", u.String(), len(nextplayers), maxplayers))
+	}
+	fmt.Println(fmt.Sprintf("New player: %s [%d/%d]", u.String(), len(nextplayers), maxplayers))
+	if len(nextplayers) >= maxplayers {
+		loadinggame = NewGame(s, nextplayers)
+		fmt.Println("Game started")
+		loadinggame.StartGame()
+		loadinggame = nil
+		nextplayers = []*Player{}
+	}
+}
+
+// AboutCommand handles the command "About"
+func AboutCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
+	em := &discordgo.MessageEmbed{}
+	em.Color = 16411649
+	me, _ := s.User("@me")
+	em.Author = &discordgo.MessageEmbedAuthor{
+		Name:    "DiscordSurvival",
+		IconURL: discordgo.EndpointUserAvatar(me.ID, me.Avatar),
+	}
+	em.Fields = append(em.Fields, &discordgo.MessageEmbedField{
+		Name:   "Creator",
+		Value:  "<@139386544275324928>",
+		Inline: true,
+	})
+	em.Fields = append(em.Fields, &discordgo.MessageEmbedField{
+		Name:   "About",
+		Value:  "```I am DiscordSurvival, a multiplayer survival game bot made by Floretta. I am still in development and very unbalanced. I hope you like my game though!```",
+		Inline: true,
+	})
+	em.Fields = append(em.Fields, &discordgo.MessageEmbedField{
+		Name:   "Development Server",
+		Value:  "https://discord.gg/pPxa93F",
+		Inline: true,
+	})
+	s.ChannelMessageSendEmbed(m.ChannelID, em)
+}
+
+// InviteCommand handles the command "Invite"
+func InviteCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
+	em := &discordgo.MessageEmbed{}
+	em.Color = 16411649
+	me, _ := s.User("@me")
+	em.Author = &discordgo.MessageEmbedAuthor{
+		Name:    "DiscordSurvival",
+		IconURL: discordgo.EndpointUserAvatar(me.ID, me.Avatar),
+	}
+	em.Fields = append(em.Fields, &discordgo.MessageEmbedField{
+		Name:   "Invite URL",
+		Value:  "https://discordapp.com/oauth2/authorize?client_id=" + me.ID + "&scope=bot",
+		Inline: true,
+	})
+	s.ChannelMessageSendEmbed(m.ChannelID, em)
+}
+
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.Bot {
 		return
 	}
 
 	if strings.HasPrefix(strings.ToLower(m.Content), conf.Prefix+"joingame") && loadinggame == nil {
-		for _, i := range ingame {
-			if i == m.Author.ID {
-				return
-			}
-		}
-		dm, _ := s.UserChannelCreate(m.Author.ID)
-		np := NewPlayer(m.Author, dm.ID)
-		ingame = append(ingame, m.Author.ID)
-		nextplayers = append(nextplayers, np)
-		for _, p := range nextplayers {
-			p.Dm(s, fmt.Sprintf("New player: %s [%d/%d]", m.Author.String(), len(nextplayers), maxplayers))
-		}
-		fmt.Println(fmt.Sprintf("New player: %s [%d/%d]", m.Author.String(), len(nextplayers), maxplayers))
-		if len(nextplayers) >= maxplayers {
-			loadinggame = NewGame(s, nextplayers)
-			fmt.Println("Game started")
-			loadinggame.StartGame()
-			loadinggame = nil
-			nextplayers = []*Player{}
-		}
+		AddNewPlayer(s, m.Author)
+	} else if strings.HasPrefix(strings.ToLower(m.Content), conf.Prefix+"about") {
+		AboutCommand(s, m)
+	} else if strings.HasPrefix(strings.ToLower(m.Content), conf.Prefix+"invite") {
+		InviteCommand(s, m)
 	}
 }
